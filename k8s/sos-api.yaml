@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: sos-api, namespace: sos }
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxUnavailable: 0, maxSurge: 1 }   # zero-downtime deploys
+  selector: { matchLabels: { app: sos-api } }
+  template:
+    metadata:
+      labels: { app: sos-api }
+      annotations: { prometheus.io/scrape: "true", prometheus.io/port: "8000" }
+    spec:
+      containers:
+        - name: sos-api
+          image: sos-api:latest          # replaced by CI / Argo CD
+          imagePullPolicy: IfNotPresent
+          env: [{ name: REDIS_URL, value: "redis://redis:6379/0" }]
+          ports: [{ containerPort: 8000 }]
+          livenessProbe: { httpGet: { path: /healthz, port: 8000 }, periodSeconds: 10 }
+          readinessProbe: { httpGet: { path: /readyz, port: 8000 }, periodSeconds: 5 }
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { memory: 256Mi }
+          securityContext: { runAsNonRoot: true, allowPrivilegeEscalation: false }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: sos-api, namespace: sos }
+spec:
+  selector: { app: sos-api }
+  ports: [{ port: 80, targetPort: 8000 }]
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata: { name: sos-api, namespace: sos }
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: sos-api }
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: 60 } }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: sos-api, namespace: sos }
+spec:
+  minAvailable: 1
+  selector: { matchLabels: { app: sos-api } }

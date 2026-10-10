@@ -1,0 +1,20 @@
+# SLO: 99% of SOS alerts delivered in under 5 seconds
+groups:
+  - name: sos-slo
+    rules:
+      - record: sos:delivery_under_5s:ratio_5m
+        expr: |
+          sum(rate(sos_alert_delivery_seconds_bucket{le="5.0"}[5m]))
+          / sum(rate(sos_alert_delivery_seconds_count[5m]))
+      - alert: SOSDeliverySLOBreach
+        expr: sos:delivery_under_5s:ratio_5m < 0.99
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "Less than 99% of SOS alerts delivered within 5s"
+      - alert: SOSNotifierDown
+        expr: up{job="notifier"} == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "Notifier is down: SOS alerts are not being delivered"

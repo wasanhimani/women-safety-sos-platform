@@ -15,12 +15,15 @@ spec:
           imagePullPolicy: IfNotPresent
           env:
             - { name: REDIS_URL, value: "redis://redis:6379/0" }
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: sos-secrets, key: postgres-password } }
+            - { name: DATABASE_URL, value: "postgresql+psycopg://sos:$(POSTGRES_PASSWORD)@postgres:5432/sos" }
             - name: TELEGRAM_BOT_TOKEN
               valueFrom: { secretKeyRef: { name: telegram, key: token, optional: true } }
             - name: TELEGRAM_CHAT_ID
               valueFrom: { secretKeyRef: { name: telegram, key: chat_id, optional: true } }
           ports: [{ containerPort: 8001 }]
           resources:
-            requests: { cpu: 50m, memory: 64Mi }
-            limits: { memory: 192Mi }
+            requests: { cpu: 50m, memory: 96Mi }
+            limits: { memory: 256Mi }
           securityContext: { runAsNonRoot: true, allowPrivilegeEscalation: false }

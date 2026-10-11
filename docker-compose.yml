@@ -1,22 +1,37 @@
+# Local development only. The passwords below are throwaway values for your own laptop.
 services:
   redis:
     image: redis:7-alpine
-    ports: ["6379:6379"]
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: sos
+      POSTGRES_PASSWORD: dev-password
+      POSTGRES_DB: sos
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sos -d sos"]
+      interval: 3s
+      retries: 20
 
   sos-api:
-    build: ./services/sos-api
+    build: { context: ., dockerfile: services/sos-api/Dockerfile }
     environment:
       REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: postgresql+psycopg://sos:dev-password@postgres:5432/sos
+      JWT_SECRET: dev-only-secret-change-me-0123456789abcdef
     ports: ["8000:8000"]
-    depends_on: [redis]
+    depends_on: [redis, postgres]
 
   notifier:
-    build: ./services/notifier
+    build: { context: ., dockerfile: services/notifier/Dockerfile }
     environment:
       REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: postgresql+psycopg://sos:dev-password@postgres:5432/sos
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
-    depends_on: [redis]
+    depends_on: [redis, postgres]
 
   prometheus:
     image: prom/prometheus:v2.54.1
@@ -27,3 +42,6 @@ services:
     image: grafana/grafana:11.2.0
     ports: ["3000:3000"]
     depends_on: [prometheus]
+
+volumes:
+  pgdata:

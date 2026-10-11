@@ -14,15 +14,21 @@ spec:
     spec:
       containers:
         - name: sos-api
-          image: sos-api:latest          # replaced by CI / Argo CD
+          image: sos-api:latest          # replaced by CI / Argo CD later
           imagePullPolicy: IfNotPresent
-          env: [{ name: REDIS_URL, value: "redis://redis:6379/0" }]
+          env:
+            - { name: REDIS_URL, value: "redis://redis:6379/0" }
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: sos-secrets, key: postgres-password } }
+            - { name: DATABASE_URL, value: "postgresql+psycopg://sos:$(POSTGRES_PASSWORD)@postgres:5432/sos" }
+            - name: JWT_SECRET
+              valueFrom: { secretKeyRef: { name: sos-secrets, key: jwt-secret } }
           ports: [{ containerPort: 8000 }]
           livenessProbe: { httpGet: { path: /healthz, port: 8000 }, periodSeconds: 10 }
           readinessProbe: { httpGet: { path: /readyz, port: 8000 }, periodSeconds: 5 }
           resources:
-            requests: { cpu: 100m, memory: 128Mi }
-            limits: { memory: 256Mi }
+            requests: { cpu: 100m, memory: 160Mi }
+            limits: { memory: 384Mi }
           securityContext: { runAsNonRoot: true, allowPrivilegeEscalation: false }
 ---
 apiVersion: v1

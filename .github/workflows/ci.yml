@@ -17,11 +17,12 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false          # scan both images even if one fails
       matrix: { service: [sos-api, notifier] }
     steps:
       - uses: actions/checkout@v4
       - name: Build image
-        run: docker build -t ${{ matrix.service }}:${{ github.sha }} services/${{ matrix.service }}
+        run: docker build -f services/${{ matrix.service }}/Dockerfile -t ${{ matrix.service }}:${{ github.sha }} .
       - name: Trivy scan (fail on HIGH/CRITICAL)
         uses: aquasecurity/trivy-action@v0.36.0
         with:
@@ -29,4 +30,3 @@ jobs:
           severity: HIGH,CRITICAL
           exit-code: "1"
           ignore-unfixed: true
-      # Next step for you: push to GHCR, then update the image tag in k8s/ so Argo CD syncs it.

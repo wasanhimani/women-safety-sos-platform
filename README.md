@@ -4,10 +4,11 @@ A backend for a personal-safety app. A user presses an SOS button; their trusted
 with a live map link. The design goal is that **an alert is never lost**, even when parts of the system fail.
 
 ```
-                   login token (no database needed to check it)
- phone/app ──POST /sos──▶ sos-api ──▶ Redis Stream ──▶ notifier ──▶ PostgreSQL ──▶ contacts read /inbox
-                              │            (durable queue)    │
-                              └──────── /metrics ─────────────┴──▶ Prometheus ──▶ Grafana
+ phone/browser ──▶ web (nginx) ──/api──▶ sos-api ──▶ Redis Stream ──▶ notifier ──▶ PostgreSQL
+ (installable app)    serves the app        │         (durable queue)      │            ▲
+                      adds security         │                              │            │
+                      headers               └── /api/inbox, /contacts ─────┴── reads ───┘
+                                            └── /metrics ──▶ Prometheus ──▶ Grafana
 ```
 
 ## Design decisions
@@ -23,6 +24,7 @@ with a live map link. The design goal is that **an alert is never lost**, even w
 ## Services
 | Service | What it does |
 |---|---|
+| `web` (nginx + plain JavaScript) | the installable phone-friendly app: SOS button, contacts, alerts. No framework, no build step, no third-party scripts |
 | `sos-api` (FastAPI) | accounts, contacts, SOS button, inbox, alert history, `/metrics` |
 | `notifier` | reads the queue, saves each alert and delivers it to the sender's accepted contacts |
 | Redis | alert queue (Redis Streams, consumer group) |
@@ -56,17 +58,28 @@ API docs at http://localhost:8000/docs, Prometheus at http://localhost:9090.
 ```bash
 kind create cluster --name sos
 bash scripts/deploy-local.sh     # builds images, creates secrets, deploys everything
-bash scripts/demo.sh             # two users sign up, one presses SOS, the other sees it
+bash scripts/open-app.sh         # opens the app at http://localhost:8080
+bash scripts/demo.sh             # or: scripted run of the whole story in the terminal
 ```
+To try it with two people, open the app in a normal window (Alice) and a private window (Bob).
+On a computer without GPS, switch on **Account > Demo location** before pressing SOS.
+
+## The app
+- Hold the SOS button for 2 seconds (a quick tap does nothing, so pocket touches can't send alerts).
+- The SOS request retries automatically if the connection drops; a retry can rarely duplicate an alert, which is safer than losing one.
+- Incoming alerts show as a notice that stays until tapped, plus a badge, a sound and a vibration.
+- Built to be readable under stress: Atkinson Hyperlegible typeface, large touch targets, high-contrast colours, keyboard operable.
+- Security: strict Content-Security-Policy (only its own files may run), all user text inserted as text (never HTML), session token kept on the device.
+- Tested in a real browser (Chrome) against the real stack: two users, contact request and accept, hold-to-send, live delivery, location-denied failure, no CSP violations.
 
 ## CI
-GitHub Actions runs the tests, builds both images and scans them with Trivy; HIGH/CRITICAL findings fail the build.
+GitHub Actions runs the tests, builds all three images and scans them with Trivy; HIGH/CRITICAL findings fail the build.
 
 ## Status and roadmap
 - [x] Alert pipeline, accounts, contacts, inbox, history
 - [x] Docker, Kubernetes manifests (replicas, probes, rolling updates, pod disruption budget), CI with security scan
 - [x] Chaos test: all notifier pods deleted during a burst of 20 alerts, none lost
-- [ ] Mobile-friendly web app (SOS button, contacts, inbox)
+- [x] Mobile-friendly installable web app (SOS button, contacts, alerts)
 - [ ] Grafana dashboard and SLO alerting ("99% of alerts processed in under 5 seconds")
 - [ ] Terraform and GitOps (Argo CD)
 - [ ] Live location link, unsafe-area reports

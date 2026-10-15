@@ -36,7 +36,7 @@ kind: Service
 metadata: { name: sos-api, namespace: sos }
 spec:
   selector: { app: sos-api }
-  ports: [{ port: 80, targetPort: 8000 }]
+  ports: [{ port: 8000, targetPort: 8000 }]
 ---
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler

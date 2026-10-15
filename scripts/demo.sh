@@ -5,7 +5,7 @@ set -euo pipefail
 PORT="${PORT:-18000}"
 BASE="http://localhost:${PORT}"
 
-kubectl -n sos port-forward svc/sos-api "${PORT}:80" >/dev/null 2>&1 &
+kubectl -n sos port-forward svc/sos-api "${PORT}:8000" >/dev/null 2>&1 &
 PF=$!
 trap 'kill $PF 2>/dev/null || true' EXIT
 for _ in $(seq 1 30); do curl -sf "${BASE}/healthz" >/dev/null 2>&1 && break; sleep 1; done

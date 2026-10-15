@@ -10,9 +10,10 @@ kubectl config use-context "kind-${CLUSTER}" >/dev/null || {
 echo "==> Building images"
 docker build -q -f services/sos-api/Dockerfile -t sos-api:latest .
 docker build -q -f services/notifier/Dockerfile -t notifier:latest .
+docker build -q -f services/web/Dockerfile -t web:latest .
 
 echo "==> Loading images into the cluster"
-kind load docker-image sos-api:latest notifier:latest --name "${CLUSTER}"
+kind load docker-image sos-api:latest notifier:latest web:latest --name "${CLUSTER}"
 
 echo "==> Applying Kubernetes files"
 kubectl apply -f k8s/namespace.yaml
@@ -28,11 +29,13 @@ echo "==> Waiting for the database"
 kubectl -n sos rollout status statefulset/postgres --timeout=180s
 
 echo "==> Restarting the apps with the new images"
-kubectl -n sos rollout restart deployment/sos-api deployment/notifier
+kubectl -n sos rollout restart deployment/sos-api deployment/notifier deployment/web
 kubectl -n sos rollout status deployment/sos-api --timeout=180s
 kubectl -n sos rollout status deployment/notifier --timeout=180s
+kubectl -n sos rollout status deployment/web --timeout=180s
 
 echo
 kubectl -n sos get pods
 echo
-echo "Done. Try the demo with:  bash scripts/demo.sh"
+echo "Done. Open the app with:  bash scripts/open-app.sh"
+echo "Or run the scripted demo with:  bash scripts/demo.sh"

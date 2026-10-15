@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false          # scan both images even if one fails
-      matrix: { service: [sos-api, notifier] }
+      matrix: { service: [sos-api, notifier, web] }
     steps:
       - uses: actions/checkout@v4
       - name: Build image

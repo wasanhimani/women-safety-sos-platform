@@ -24,6 +24,11 @@ services:
     ports: ["8000:8000"]
     depends_on: [redis, postgres]
 
+  web:
+    build: { context: ., dockerfile: services/web/Dockerfile }
+    ports: ["8080:8080"]
+    depends_on: [sos-api]
+
   notifier:
     build: { context: ., dockerfile: services/notifier/Dockerfile }
     environment:

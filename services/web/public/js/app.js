@@ -19,7 +19,7 @@ let cleanup = null;
 let pollTimer = null;
 
 function freshState() {
-  return { contacts: null, inbox: [], knownAlerts: new Set(), inboxLoaded: false };
+  return { contacts: null, inbox: [], knownAlerts: new Set(), inboxLoaded: false, offline: false };
 }
 
 function resetState() {
@@ -61,7 +61,8 @@ function render() {
   }
   const route = currentRoute();
   const main = h("main", { class: "screen", id: "main" });
-  app.append(main, tabBar(route));
+  const banner = h("div", { class: "offline-banner", id: "offline", role: "status", hidden: !state.offline }, "Can't reach the server. Trying again…");
+  app.append(banner, main, tabBar(route));
   cleanup = ROUTES[route].view.mount(main, ctx) || null;
   updateBadges();
   window.scrollTo(0, 0);
@@ -94,17 +95,25 @@ function absorbInbox(inbox) {
   state.inbox = inbox;
 }
 
+function setOffline(flag) {
+  state.offline = flag;
+  const banner = document.getElementById("offline");
+  if (banner) banner.hidden = !flag;
+}
+
 async function refresh() {
   if (!getSession()) return;
   try {
     const [contactsData, inbox] = await Promise.all([api.contacts(), api.inbox()]);
     state.contacts = contactsData;
     absorbInbox(inbox);
+    setOffline(false);
     updateBadges();
-    window.dispatchEvent(new Event(DATA_EVENT));
   } catch {
-    /* offline or server busy: keep what we have and try again on the next tick */
+    // No connection or the server is busy: keep what we have, say so, and try again on the next tick.
+    setOffline(true);
   }
+  window.dispatchEvent(new Event(DATA_EVENT));
 }
 
 function startPolling() {

@@ -188,6 +188,8 @@ a { color: inherit; }
   display: grid; place-items: center; border-radius: 999px; background: var(--signal); color: #fff; font-size: .75rem;
 }
 
+.offline-banner { position: sticky; top: 0; z-index: 6; padding: .6rem 1rem; background: var(--wait-bg); color: var(--wait); font-weight: 700; text-align: center; font-size: .95rem; }
+
 /* switch */
 .switch { display: flex; align-items: center; gap: .9rem; cursor: pointer; }
 .switch input { position: absolute; width: 1px; height: 1px; opacity: 0; }

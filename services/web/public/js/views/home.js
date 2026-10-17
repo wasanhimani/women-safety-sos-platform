@@ -106,7 +106,7 @@ export function mount(root, ctx) {
     status.replaceChildren();
     button.disabled = n === 0;
     hint.hidden = n === 0;
-    if (n === null) status.append("Checking your trusted contacts…");
+    if (n === null) status.append(ctx.state.offline ? "Can't check your contacts right now. You can still send an SOS." : "Checking your trusted contacts…");
     else if (n === 0) {
       const waiting = c.my_contacts.length > 0;
       status.append(

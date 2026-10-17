@@ -54,11 +54,11 @@ export function mount(root, ctx) {
   let shown = "";
   function draw() {
     const c = ctx.state.contacts;
-    const signature = JSON.stringify(c);
+    const signature = JSON.stringify([c, ctx.state.offline]);
     if (signature === shown) return;
     shown = signature;
     if (!c) {
-      mineBox.replaceChildren(sheet("Your trusted contacts", [], h("p", {}, "Loading…")));
+      mineBox.replaceChildren(sheet("Your trusted contacts", [], h("p", {}, ctx.state.offline ? "Can't load your contacts right now. Trying again…" : "Loading…")));
       return;
     }
     requestsBox.replaceChildren(

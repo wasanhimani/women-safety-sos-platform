@@ -10,7 +10,7 @@ import redis
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from prometheus_client import CONTENT_TYPE_LATEST, Counter, generate_latest
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, generate_latest
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -20,6 +20,7 @@ from common.db import Alert, Contact, Database, Delivery, User, utcnow
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 STREAM = os.getenv("ALERT_STREAM", "sos_alerts")
+GROUP = os.getenv("CONSUMER_GROUP", "notifiers")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 security.jwt_secret()  # fail fast at startup if the signing secret is missing
@@ -29,6 +30,9 @@ db = Database(DATABASE_URL) if DATABASE_URL else None
 
 ALERTS_RECEIVED = Counter("sos_alerts_received_total", "SOS alerts accepted by the API")
 ALERTS_FAILED = Counter("sos_alerts_enqueue_failed_total", "SOS alerts that failed to enqueue")
+# Published by the API (not the notifier) so the numbers stay visible while every notifier is down.
+QUEUE_LAG = Gauge("sos_queue_lag", "Alerts in the queue that no notifier has picked up yet")
+QUEUE_PENDING = Gauge("sos_queue_pending", "Alerts picked up by a notifier but not yet finished")
 
 
 @asynccontextmanager
@@ -161,6 +165,13 @@ def readyz():
 
 @app.get("/metrics", include_in_schema=False)
 def metrics():
+    try:
+        for group in r.xinfo_groups(STREAM):
+            if group.get("name") == GROUP:
+                QUEUE_LAG.set(group.get("lag") or 0)
+                QUEUE_PENDING.set(group.get("pending") or 0)
+    except redis.RedisError:
+        pass  # no queue or no notifier group yet
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 

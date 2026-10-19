@@ -72,6 +72,23 @@ On a computer without GPS, switch on **Account > Demo location** before pressing
 - Security: strict Content-Security-Policy (only its own files may run), all user text inserted as text (never HTML), session token kept on the device.
 - Tested in a real browser (Chrome) against the real stack: two users, contact request and accept, hold-to-send, live delivery, location-denied failure, no CSP violations.
 
+## Monitoring
+```bash
+bash scripts/open-grafana.sh     # opens the dashboard at http://localhost:3000
+```
+Prometheus scrapes every API and notifier pod; Grafana shows the **Raksha: SOS alert pipeline** dashboard:
+alerts accepted vs delivered per minute, time to deliver (median, 95th, 99th percentile), alerts waiting in the queue,
+pods running, and the service level objective **99% of alerts delivered within 5 seconds**.
+Alert rules (`monitoring/slo-rules.yml`) fire when that objective is missed, when no notifier or API pod is running,
+or when alerts sit in the queue for over a minute. Run the chaos test below and watch the dashboard react.
+
+## Chaos test
+```bash
+bash scripts/chaos-test.sh
+```
+Sends 20 alerts, one per second, and deletes every notifier pod 5 seconds in. It then checks that the contact
+still received all 20 once Kubernetes has started replacement pods. Prints PASS or FAIL.
+
 ## CI
 GitHub Actions runs the tests, builds all three images and scans them with Trivy; HIGH/CRITICAL findings fail the build.
 
@@ -80,7 +97,7 @@ GitHub Actions runs the tests, builds all three images and scans them with Trivy
 - [x] Docker, Kubernetes manifests (replicas, probes, rolling updates, pod disruption budget), CI with security scan
 - [x] Chaos test: all notifier pods deleted during a burst of 20 alerts, none lost
 - [x] Mobile-friendly installable web app (SOS button, contacts, alerts)
-- [ ] Grafana dashboard and SLO alerting ("99% of alerts processed in under 5 seconds")
+- [x] Grafana dashboard and SLO alerting ("99% of alerts processed in under 5 seconds")
 - [ ] Terraform and GitOps (Argo CD)
 - [ ] Live location link, unsafe-area reports
 

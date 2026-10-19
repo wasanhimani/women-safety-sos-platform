@@ -1,0 +1,102 @@
+# Headless services: DNS returns every pod address, so Prometheus scrapes each pod separately.
+apiVersion: v1
+kind: Service
+metadata: { name: sos-api-metrics, namespace: sos }
+spec:
+  clusterIP: None
+  selector: { app: sos-api }
+  ports: [{ name: metrics, port: 8000 }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: notifier-metrics, namespace: sos }
+spec:
+  clusterIP: None
+  selector: { app: notifier }
+  ports: [{ name: metrics, port: 8001 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: prometheus, namespace: sos }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: prometheus } }
+  template:
+    metadata: { labels: { app: prometheus } }
+    spec:
+      securityContext: { fsGroup: 65534 }
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v2.54.1
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.path=/prometheus
+            - --storage.tsdb.retention.time=2d
+          ports: [{ containerPort: 9090 }]
+          readinessProbe: { httpGet: { path: /-/ready, port: 9090 }, periodSeconds: 5 }
+          volumeMounts:
+            - { name: config, mountPath: /etc/prometheus }
+            - { name: data, mountPath: /prometheus }
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 384Mi }
+      volumes:
+        - name: config
+          configMap: { name: prometheus-config }
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata: { name: prometheus, namespace: sos }
+spec:
+  selector: { app: prometheus }
+  ports: [{ port: 9090, targetPort: 9090 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: grafana, namespace: sos }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: grafana } }
+  template:
+    metadata: { labels: { app: grafana } }
+    spec:
+      securityContext: { fsGroup: 472 }
+      containers:
+        - name: grafana
+          image: grafana/grafana:11.2.0
+          env:
+            - { name: GF_AUTH_ANONYMOUS_ENABLED, value: "true" }            # local demo: view the dashboard without logging in
+            - { name: GF_AUTH_ANONYMOUS_ORG_ROLE, value: Viewer }
+            - { name: GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH, value: /var/lib/grafana/dashboards/sos-dashboard.json }
+            - { name: GF_ANALYTICS_REPORTING_ENABLED, value: "false" }
+            - { name: GF_ANALYTICS_CHECK_FOR_UPDATES, value: "false" }
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              valueFrom: { secretKeyRef: { name: grafana-admin, key: password } }
+          ports: [{ containerPort: 3000 }]
+          readinessProbe: { httpGet: { path: /api/health, port: 3000 }, periodSeconds: 5 }
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/grafana }
+            - { name: datasource, mountPath: /etc/grafana/provisioning/datasources }
+            - { name: dashboard-provider, mountPath: /etc/grafana/provisioning/dashboards }
+            - { name: dashboard, mountPath: /var/lib/grafana/dashboards }
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 512Mi }
+      volumes:
+        - name: data
+          emptyDir: {}
+        - name: datasource
+          configMap: { name: grafana-datasource }
+        - name: dashboard-provider
+          configMap: { name: grafana-dashboard-provider }
+        - name: dashboard
+          configMap: { name: grafana-dashboard }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: grafana, namespace: sos }
+spec:
+  selector: { app: grafana }
+  ports: [{ port: 3000, targetPort: 3000 }]

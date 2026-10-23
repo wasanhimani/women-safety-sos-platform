@@ -1,5 +1,6 @@
 import logging
 import os
+import signal
 import socket
 import time
 from datetime import datetime, timezone
@@ -32,6 +33,17 @@ DELIVERY_LATENCY = Histogram(
     "Seconds from API acceptance to delivery",
     buckets=(0.5, 1, 2, 3, 5, 10, 30, 60),
 )
+
+
+STOP = False
+
+
+def request_stop(signum, frame) -> None:
+    """Kubernetes asks nicely with SIGTERM. A Python process running as the container's main process
+    ignores it unless it has a handler, so without this the pod would keep working until it is force-killed."""
+    global STOP
+    STOP = True
+    log.info("signal %s received: finishing the current alerts, then shutting down", signum)
 
 
 class BadMessage(Exception):
@@ -137,9 +149,11 @@ def main() -> None:
     db.wait_until_ready()
     r = redis.Redis.from_url(REDIS_URL, decode_responses=True)
     ensure_group(r)
+    signal.signal(signal.SIGTERM, request_stop)
+    signal.signal(signal.SIGINT, request_stop)
     log.info("notifier %s started", CONSUMER)
 
-    while True:
+    while not STOP:
         try:
             batches = r.xreadgroup(GROUP, CONSUMER, {STREAM: ">"}, count=10, block=5000)
             if not batches:
@@ -152,6 +166,7 @@ def main() -> None:
         except redis.RedisError:
             log.exception("redis error, retrying in 2s")
             time.sleep(2)
+    log.info("notifier %s stopped cleanly", CONSUMER)
 
 
 if __name__ == "__main__":

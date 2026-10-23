@@ -86,7 +86,7 @@ or when alerts sit in the queue for over a minute. Run the chaos test below and 
 ```bash
 bash scripts/chaos-test.sh
 ```
-Sends 20 alerts, one per second, and deletes every notifier pod 5 seconds in. It then checks that the contact
+Sends 20 alerts, one per second, and force-crashes every notifier pod (no grace period) 5 seconds in. It then checks that the contact
 still received all 20 once Kubernetes has started replacement pods. Prints PASS or FAIL.
 
 ## CI

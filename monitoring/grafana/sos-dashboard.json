@@ -59,7 +59,19 @@
               }
             ]
           },
-          "decimals": 1
+          "decimals": 1,
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "text": "No alerts yet",
+                  "color": "#6B7488"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },

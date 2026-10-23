@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Chaos test: send 20 SOS alerts, one per second, and delete EVERY notifier pod 5 seconds in.
+# Chaos test: send 20 SOS alerts, one per second, and CRASH every notifier pod 5 seconds in
+# (force-delete with no grace period, so the pods die instantly instead of shutting down politely).
 # Then check that the contact still received all 20. Needs the cluster from deploy-local.sh.
 set -uo pipefail
 COUNT="${COUNT:-20}"
@@ -28,8 +29,8 @@ CID="$(post /contacts "{\"email\":\"${BOB}\"}" "$A_TOKEN" | json "d['id']")"
 post "/contacts/${CID}/accept" '{}' "$B_TOKEN" >/dev/null
 [ -n "$A_TOKEN" ] && [ -n "$B_TOKEN" ] && [ -n "$CID" ] || { echo "Could not create the test users."; exit 1; }
 
-echo "2) Sending ${COUNT} alerts, one per second. After 5 seconds EVERY notifier pod is deleted."
-( sleep 5; echo; echo "   >>> deleting all notifier pods now"; kubectl -n sos delete pod -l app=notifier --wait=false >/dev/null 2>&1 ) &
+echo "2) Sending ${COUNT} alerts, one per second. After 5 seconds EVERY notifier pod is crashed."
+( sleep 5; echo; echo "   >>> crashing all notifier pods now"; kubectl -n sos delete pod -l app=notifier --grace-period=0 --force --wait=false >/dev/null 2>&1 ) &
 KILLER=$!
 ACCEPTED=0
 for i in $(seq 1 "$COUNT"); do
@@ -61,7 +62,7 @@ echo "Accepted by the app:      ${ACCEPTED} of ${COUNT}"
 echo "Received by the contact:  ${GOT} of ${COUNT}"
 [ -n "${PENDING}" ] && echo "Stuck in the queue:       ${PENDING}"
 if [ "$ACCEPTED" -eq "$COUNT" ] && [ "$GOT" -eq "$COUNT" ]; then
-  echo "PASS: all ${COUNT} alerts reached the contact even though every notifier pod was deleted mid-burst."
+  echo "PASS: all ${COUNT} alerts reached the contact even though every notifier pod was crashed mid-burst."
 else
   echo "FAIL: not every alert arrived. Copy this whole output and send it to your assistant."
   exit 1

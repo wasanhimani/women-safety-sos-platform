@@ -9,6 +9,7 @@ spec:
       labels: { app: notifier }
       annotations: { prometheus.io/scrape: "true", prometheus.io/port: "8001" }
     spec:
+      terminationGracePeriodSeconds: 15
       containers:
         - name: notifier
           image: notifier:latest

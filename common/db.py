@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import (
     DateTime,
+    Index,
     Float,
     ForeignKey,
     Integer,
@@ -62,6 +63,7 @@ class Alert(Base):
     longitude: Mapped[float] = mapped_column(Float)
     message: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    kind: Mapped[str] = mapped_column(String(20), default="sos", server_default="sos")  # sos | walk_missed | safe
 
 
 class Delivery(Base):
@@ -73,6 +75,30 @@ class Delivery(Base):
     recipient_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     delivered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class Walk(Base):
+    """A walk-home timer. The server watches the deadline, so it still fires if the phone dies."""
+
+    __tablename__ = "walks"
+    __table_args__ = (
+        # at most one unfinished walk per person
+        Index("one_open_walk_per_user", "user_id", unique=True,
+              postgresql_where=text("status IN ('active','alerted')"), sqlite_where=text("status IN ('active','alerted')")),
+        Index("walks_status_due", "status", "due_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    note: Mapped[str] = mapped_column(String(100), default="")
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(String(10), default="active")  # active | alerted | safe | cancelled
+    last_latitude: Mapped[float] = mapped_column(Float)
+    last_longitude: Mapped[float] = mapped_column(Float)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    alerted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class Database:
@@ -89,6 +115,9 @@ class Database:
             if self.engine.dialect.name == "postgresql":
                 conn.execute(text("SELECT pg_advisory_xact_lock(727001)"))
             Base.metadata.create_all(conn)
+            if self.engine.dialect.name == "postgresql":
+                # create_all never changes a table that already exists, so new columns need an explicit upgrade step
+                conn.execute(text("ALTER TABLE alerts ADD COLUMN IF NOT EXISTS kind VARCHAR(20) NOT NULL DEFAULT 'sos'"))
 
     def wait_until_ready(self, delay: float = 2.0) -> None:
         """Block until the database is reachable and the tables exist."""

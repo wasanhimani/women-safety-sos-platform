@@ -1,13 +1,16 @@
-import { APP_NAME, DATA_EVENT, chime, h, icon, toast } from "./ui.js";
+import { APP_NAME, DATA_EVENT, chime, h, icon, toast, walkPhase } from "./ui.js";
 import { api, getSession, setSession } from "./api.js";
 import * as auth from "./views/auth.js";
 import * as home from "./views/home.js";
+import * as walk from "./views/walk.js";
 import * as contacts from "./views/contacts.js";
+import { getLocation } from "./location.js";
 import * as alerts from "./views/alerts.js";
 import * as account from "./views/account.js";
 
 const ROUTES = {
   home: { view: home, label: "SOS", icon: "sos" },
+  walk: { view: walk, label: "Walk", icon: "walk", badge: "walk" },
   contacts: { view: contacts, label: "Contacts", icon: "people", badge: "contacts" },
   alerts: { view: alerts, label: "Alerts", icon: "bell", badge: "alerts" },
   account: { view: account, label: "Account", icon: "person" },
@@ -19,7 +22,7 @@ let cleanup = null;
 let pollTimer = null;
 
 function freshState() {
-  return { contacts: null, inbox: [], knownAlerts: new Set(), inboxLoaded: false, offline: false };
+  return { contacts: null, inbox: [], knownAlerts: new Set(), inboxLoaded: false, offline: false, walk: null, walkWarnedFor: null };
 }
 
 function resetState() {
@@ -71,13 +74,15 @@ function render() {
 function setBadge(name, count) {
   const el = document.querySelector(`[data-badge="${name}"]`);
   if (!el) return;
-  el.textContent = count > 9 ? "9+" : String(count);
+  el.textContent = name === "walk" ? "!" : count > 9 ? "9+" : String(count);
   el.hidden = count === 0;
 }
 
 function updateBadges() {
   const unseen = state.inbox.filter((a) => !a.seen).length;
   const requests = state.contacts ? state.contacts.requests_to_me.length : 0;
+  const phase = walkPhase(state.walk);
+  setBadge("walk", phase === "overdue" || phase === "alerted" ? 1 : 0);
   setBadge("alerts", unseen);
   setBadge("contacts", requests);
   document.title = unseen ? `(${unseen}) ${APP_NAME}` : APP_NAME;
@@ -88,8 +93,14 @@ function absorbInbox(inbox) {
   inbox.forEach((a) => state.knownAlerts.add(a.delivery_id));
   // The first load only learns what already exists. After that, anything new gets a chime.
   if (state.inboxLoaded && fresh.length) {
-    chime();
-    toast(fresh.length > 1 ? `${fresh.length} new SOS alerts` : `SOS from ${fresh[0].from}`, "alert");
+    const urgent = fresh.filter((a) => a.kind !== "safe");
+    if (urgent.length) {
+      chime();
+      const first = urgent[0];
+      toast(urgent.length > 1 ? `${urgent.length} new alerts` : first.kind === "walk_missed" ? `${first.from} missed a check-in` : `SOS from ${first.from}`, "alert");
+    } else {
+      toast(`${fresh[0].from} says they are safe.`, "ok");
+    }
   }
   state.inboxLoaded = true;
   state.inbox = inbox;
@@ -104,8 +115,9 @@ function setOffline(flag) {
 async function refresh() {
   if (!getSession()) return;
   try {
-    const [contactsData, inbox] = await Promise.all([api.contacts(), api.inbox()]);
+    const [contactsData, inbox, activeWalk] = await Promise.all([api.contacts(), api.inbox(), api.activeWalk()]);
     state.contacts = contactsData;
+    state.walk = activeWalk ? { ...activeWalk, fetchedAt: Date.now() } : null;
     absorbInbox(inbox);
     setOffline(false);
     updateBadges();
@@ -144,6 +156,27 @@ function logout() {
   location.hash = "";
   render();
 }
+
+// Once a second: when the walk timer reaches zero, make sure the person notices, whatever screen they are on.
+setInterval(() => {
+  const w = state.walk;
+  if (!w || !getSession()) return;
+  if (walkPhase(w) === "overdue" && state.walkWarnedFor !== w.id) {
+    state.walkWarnedFor = w.id;
+    chime();
+    // On the Walk screen the warning is already in front of her, and a notice would cover the countdown.
+    if (location.hash !== "#/walk") toast("Time is up. Tap to confirm you are safe.", "alert", { target: "#/walk", sub: "Your contacts are alerted in about a minute" });
+  }
+  updateBadges();
+}, 1000);
+
+// Every minute while a walk is running and the app is open: remember where the person is, so the alert has a recent location.
+setInterval(async () => {
+  const w = state.walk;
+  if (!w || w.status !== "active" || document.hidden || !getSession()) return;
+  const loc = await getLocation();
+  if (loc.ok) api.pingWalk(w.id, loc.latitude, loc.longitude).catch(() => {});
+}, 60000);
 
 window.addEventListener("hashchange", render);
 window.addEventListener("raksha:logout", () => {

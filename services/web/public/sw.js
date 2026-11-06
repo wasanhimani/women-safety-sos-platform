@@ -1,10 +1,10 @@
 // Keeps the app shell available when the connection drops. API calls are never cached:
 // an SOS must always go to the real server, and old alerts must never be shown as new.
-const CACHE = "raksha-shell-v1";
+const CACHE = "raksha-shell-v2";
 const SHELL = [
   "/", "/index.html", "/styles.css", "/manifest.webmanifest",
-  "/js/app.js", "/js/api.js", "/js/ui.js",
-  "/js/views/auth.js", "/js/views/home.js", "/js/views/contacts.js", "/js/views/alerts.js", "/js/views/account.js",
+  "/js/app.js", "/js/api.js", "/js/ui.js", "/js/location.js",
+  "/js/views/auth.js", "/js/views/home.js", "/js/views/walk.js", "/js/views/contacts.js", "/js/views/alerts.js", "/js/views/account.js",
   "/fonts/atkinson-hyperlegible-latin-400-normal.woff2", "/fonts/atkinson-hyperlegible-latin-700-normal.woff2",
   "/icons/icon-192.png", "/icons/favicon-32.png",
 ];

@@ -3,6 +3,12 @@ import { api } from "../api.js";
 
 let lastTab = "received";
 
+function kindChip(kind) {
+  if (kind === "walk_missed") return h("span", { class: "chip chip-alert kind" }, "Missed check-in");
+  if (kind === "safe") return h("span", { class: "chip chip-ok kind" }, "Safe");
+  return null;
+}
+
 export function mount(root, ctx) {
   let tab = lastTab;
   let sent = null;
@@ -49,8 +55,8 @@ export function mount(root, ctx) {
       ...inbox.map((a) =>
         h(
           "article",
-          { class: `alert${a.seen ? "" : " alert-unseen"}` },
-          h("div", { class: "alert-head" }, h("strong", {}, a.seen ? null : h("span", { class: "sr-only" }, "Unseen. "), a.from), h("time", { datetime: a.sent_at, title: fullTime(a.sent_at) }, timeAgo(a.sent_at))),
+          { class: `alert${a.seen ? "" : a.kind === "safe" ? " alert-unseen alert-safe" : " alert-unseen"}` },
+          h("div", { class: "alert-head" }, h("strong", {}, a.seen ? null : h("span", { class: "sr-only" }, "Unseen. "), a.from, kindChip(a.kind)), h("time", { datetime: a.sent_at, title: fullTime(a.sent_at) }, timeAgo(a.sent_at))),
           h("p", { class: "alert-msg" }, a.message),
           h(
             "div",
@@ -73,7 +79,7 @@ export function mount(root, ctx) {
         h(
           "article",
           { class: "alert" },
-          h("div", { class: "alert-head" }, h("strong", {}, a.message), h("time", { datetime: a.sent_at, title: fullTime(a.sent_at) }, timeAgo(a.sent_at))),
+          h("div", { class: "alert-head" }, h("strong", {}, a.message, kindChip(a.kind)), h("time", { datetime: a.sent_at, title: fullTime(a.sent_at) }, timeAgo(a.sent_at))),
           h(
             "p",
             { class: "alert-facts" },

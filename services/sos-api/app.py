@@ -3,24 +3,27 @@ import re
 import threading
 import time
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import jwt
 import redis
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, generate_latest
+from prometheus_client import CONTENT_TYPE_LATEST, REGISTRY, Counter, generate_latest
+from prometheus_client.core import CounterMetricFamily, GaugeMetricFamily
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 import security
-from common.db import Alert, Contact, Database, Delivery, User, utcnow
+from common.alerts import store_alert
+from common.db import Alert, Contact, Database, Delivery, User, Walk, utcnow
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 STREAM = os.getenv("ALERT_STREAM", "sos_alerts")
 GROUP = os.getenv("CONSUMER_GROUP", "notifiers")
+WALK_GRACE_SECONDS = int(os.getenv("WALK_GRACE_SECONDS", "60"))
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 security.jwt_secret()  # fail fast at startup if the signing secret is missing
@@ -30,9 +33,44 @@ db = Database(DATABASE_URL) if DATABASE_URL else None
 
 ALERTS_RECEIVED = Counter("sos_alerts_received_total", "SOS alerts accepted by the API")
 ALERTS_FAILED = Counter("sos_alerts_enqueue_failed_total", "SOS alerts that failed to enqueue")
-# Published by the API (not the notifier) so the numbers stay visible while every notifier is down.
-QUEUE_LAG = Gauge("sos_queue_lag", "Alerts in the queue that no notifier has picked up yet")
-QUEUE_PENDING = Gauge("sos_queue_pending", "Alerts picked up by a notifier but not yet finished")
+
+
+class QueueCollector:
+    """Reads the alert queue's state from Redis every time Prometheus asks.
+
+    The numbers come from the queue itself, not from the notifier pods, and are published by the API pods.
+    So they survive a notifier crash: when every notifier dies, the dashboard still shows alerts waiting
+    and for how long. Numbers kept inside a pod would vanish together with the pod."""
+
+    def collect(self):
+        lag = pending = processed = oldest = 0
+        try:
+            for group in r.xinfo_groups(STREAM):
+                if group.get("name") != GROUP:
+                    continue
+                lag = group.get("lag") or 0
+                pending = group.get("pending") or 0
+                processed = max(0, (group.get("entries-read") or 0) - pending)
+                waiting = []  # ids of alerts nobody has finished yet; an id starts with its creation time in ms
+                if pending:
+                    first_pending = r.xpending(STREAM, GROUP).get("min")
+                    if first_pending:
+                        waiting.append(first_pending)
+                if lag:
+                    unread = r.xrange(STREAM, min=f"({group['last-delivered-id']}", max="+", count=1)
+                    if unread:
+                        waiting.append(unread[0][0])
+                if waiting:
+                    oldest = max(0.0, (time.time() * 1000 - min(int(i.split("-")[0]) for i in waiting)) / 1000)
+        except redis.RedisError:
+            pass  # no queue or no notifier group yet
+        yield GaugeMetricFamily("sos_queue_lag", "Alerts in the queue that no notifier has picked up yet", value=lag)
+        yield GaugeMetricFamily("sos_queue_pending", "Alerts picked up by a notifier but not yet finished", value=pending)
+        yield GaugeMetricFamily("sos_queue_oldest_waiting_seconds", "How long the oldest unfinished alert has been waiting", value=oldest)
+        yield CounterMetricFamily("sos_alerts_processed", "Alerts a notifier has finished (saved and delivered)", value=processed)
+
+
+REGISTRY.register(QueueCollector())
 
 
 @asynccontextmanager
@@ -165,13 +203,6 @@ def readyz():
 
 @app.get("/metrics", include_in_schema=False)
 def metrics():
-    try:
-        for group in r.xinfo_groups(STREAM):
-            if group.get("name") == GROUP:
-                QUEUE_LAG.set(group.get("lag") or 0)
-                QUEUE_PENDING.set(group.get("pending") or 0)
-    except redis.RedisError:
-        pass  # no queue or no notifier group yet
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
@@ -302,6 +333,7 @@ def inbox(claims: security.Claims = Depends(current_user), session=Depends(get_s
     return [
         {
             "delivery_id": d.id,
+            "kind": a.kind,
             "from": u.name,
             "message": a.message,
             "latitude": a.latitude,
@@ -341,6 +373,7 @@ def sent_alerts(claims: security.Claims = Depends(current_user), session=Depends
     return [
         {
             "id": a.id,
+            "kind": a.kind,
             "message": a.message,
             "latitude": a.latitude,
             "longitude": a.longitude,
@@ -350,3 +383,135 @@ def sent_alerts(claims: security.Claims = Depends(current_user), session=Depends
         }
         for a in alerts
     ]
+
+
+# ---------- walk-home timer ----------
+# The deadline is watched by the server (see the notifier), so the alert still goes out
+# if the phone dies, loses signal or is taken.
+
+OPEN_WALK = ("active", "alerted")
+
+
+class WalkStart(BaseModel):
+    minutes: int = Field(ge=1, le=240)
+    note: str = Field(default="", max_length=100)
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
+
+
+class WalkPing(BaseModel):
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
+
+
+class WalkExtend(BaseModel):
+    minutes: int = Field(ge=1, le=60)
+
+
+def aware(dt: datetime) -> datetime:
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def walk_json(w: Walk) -> dict:
+    now = utcnow()
+    due = aware(w.due_at)
+    return {
+        "id": w.id,
+        "status": w.status,
+        "note": w.note,
+        "started_at": iso(w.started_at),
+        "due_at": iso(due),
+        "alert_at": iso(due + timedelta(seconds=WALK_GRACE_SECONDS)),
+        "seconds_left": int((due - now).total_seconds()),
+        "seconds_to_alert": int((due + timedelta(seconds=WALK_GRACE_SECONDS) - now).total_seconds()),
+        "alerted_at": iso(w.alerted_at),
+        "last_latitude": w.last_latitude,
+        "last_longitude": w.last_longitude,
+    }
+
+
+def own_open_walk(session, walk_id: int, user_id: int, statuses=OPEN_WALK) -> Walk:
+    walk = session.get(Walk, walk_id)
+    if walk is None or walk.user_id != user_id or walk.status not in statuses:
+        raise HTTPException(status_code=404, detail="walk not found")
+    return walk
+
+
+@app.post("/walks", status_code=201)
+def start_walk(req: WalkStart, claims: security.Claims = Depends(current_user), session=Depends(get_session)):
+    accepted = session.scalar(
+        select(func.count(Contact.id)).where(Contact.requester_id == claims.user_id, Contact.status == "accepted")
+    )
+    if not accepted:
+        raise HTTPException(status_code=400, detail="Add a trusted contact who has accepted before starting a walk.")
+    now = utcnow()
+    walk = Walk(
+        user_id=claims.user_id,
+        note=req.note.strip(),
+        started_at=now,
+        due_at=now + timedelta(minutes=req.minutes),
+        last_latitude=req.latitude,
+        last_longitude=req.longitude,
+        last_seen_at=now,
+    )
+    session.add(walk)
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(status_code=409, detail="You already have a walk in progress.")
+    return walk_json(walk)
+
+
+@app.get("/walks/active")
+def active_walk(claims: security.Claims = Depends(current_user), session=Depends(get_session)):
+    walk = session.scalar(
+        select(Walk).where(Walk.user_id == claims.user_id, Walk.status.in_(OPEN_WALK)).order_by(Walk.id.desc())
+    )
+    return walk_json(walk) if walk else None
+
+
+@app.post("/walks/{walk_id}/ping")
+def ping_walk(walk_id: int, req: WalkPing, claims: security.Claims = Depends(current_user), session=Depends(get_session)):
+    walk = own_open_walk(session, walk_id, claims.user_id)
+    walk.last_latitude, walk.last_longitude, walk.last_seen_at = req.latitude, req.longitude, utcnow()
+    session.commit()
+    return {"ok": True}
+
+
+@app.post("/walks/{walk_id}/extend")
+def extend_walk(walk_id: int, req: WalkExtend, claims: security.Claims = Depends(current_user), session=Depends(get_session)):
+    walk = own_open_walk(session, walk_id, claims.user_id, statuses=("active",))
+    new_due = aware(walk.due_at) + timedelta(minutes=req.minutes)
+    if new_due > aware(walk.started_at) + timedelta(hours=4):
+        raise HTTPException(status_code=400, detail="A walk can last at most 4 hours.")
+    walk.due_at = new_due
+    session.commit()
+    return walk_json(walk)
+
+
+@app.post("/walks/{walk_id}/safe")
+def walk_safe(walk_id: int, claims: security.Claims = Depends(current_user), session=Depends(get_session)):
+    """The person is safe. If the alert already went out, the contacts are told it is over."""
+    walk = own_open_walk(session, walk_id, claims.user_id)
+    tell_contacts = walk.status == "alerted"
+    walk.status, walk.ended_at = "safe", utcnow()
+    session.commit()
+    if tell_contacts:
+        store_alert(db, f"safe-{walk.id}", {
+            "sender_id": str(claims.user_id),
+            "latitude": str(walk.last_latitude),
+            "longitude": str(walk.last_longitude),
+            "message": "I'm safe now. Sorry for the scare.",
+            "created_at": str(time.time()),
+            "kind": "safe",
+        })
+    return {"status": "safe", "contacts_told": tell_contacts}
+
+
+@app.delete("/walks/{walk_id}", status_code=204)
+def cancel_walk(walk_id: int, claims: security.Claims = Depends(current_user), session=Depends(get_session)):
+    walk = own_open_walk(session, walk_id, claims.user_id, statuses=("active",))
+    walk.status, walk.ended_at = "cancelled", utcnow()
+    session.commit()
+    return Response(status_code=204)

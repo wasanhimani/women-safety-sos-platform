@@ -42,6 +42,7 @@ const ICONS = {
     "M16.5 11.2a2.8 2.8 0 1 0 0-5.6",
     "M17.5 14.6c2.2.3 3.9 2.3 3.9 5",
   ],
+  walk: ["M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z", "M12 7v5l3 2"],
   bell: ["M6 17v-6a6 6 0 1 1 12 0v6l1.5 2h-15z", "M10 21h4"],
   person: ["M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8z", "M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"],
 };
@@ -83,16 +84,16 @@ export function plural(n, one, many) {
   return `${n} ${n === 1 ? one : many}`;
 }
 
-export function toast(message, kind = "info") {
+export function toast(message, kind = "info", opts = {}) {
   const box = document.getElementById("toasts");
   if (!box) return;
   if (kind === "alert") {
     // An incoming SOS stays on screen until it is tapped. It must never disappear unnoticed.
     const el = h(
       "button",
-      { class: "toast toast-alert", type: "button", role: "alert", onclick: () => { el.remove(); location.hash = "#/alerts"; } },
+      { class: "toast toast-alert", type: "button", role: "alert", onclick: () => { el.remove(); location.hash = opts.target || "#/alerts"; } },
       h("span", {}, message),
-      h("span", { class: "toast-sub" }, "Tap to see where they are"),
+      h("span", { class: "toast-sub" }, opts.sub || "Tap to see where they are"),
     );
     box.append(el);
     return;
@@ -139,4 +140,25 @@ export function chime() {
     /* no sound available */
   }
   vibrate([200, 100, 200]);
+}
+
+// ---- walk timer helpers (the server sends seconds; the app counts down locally between refreshes)
+export const secondsLeft = (walk) => walk.seconds_left - (Date.now() - walk.fetchedAt) / 1000;
+
+export function walkPhase(walk) {
+  if (!walk) return null;
+  if (walk.status === "alerted") return "alerted";
+  return secondsLeft(walk) > 0 ? "active" : "overdue";
+}
+
+export function fmtClock(totalSeconds) {
+  const t = Math.max(0, Math.ceil(totalSeconds));
+  const hh = Math.floor(t / 3600);
+  const mm = String(Math.floor((t % 3600) / 60)).padStart(2, "0");
+  const ss = String(t % 60).padStart(2, "0");
+  return hh ? `${hh}:${mm}:${ss}` : `${mm}:${ss}`;
+}
+
+export function fmtTime(iso) {
+  return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }

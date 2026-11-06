@@ -6,7 +6,7 @@
   ],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "editable": false,
   "refresh": "5s",
   "time": {
@@ -18,22 +18,22 @@
     {
       "id": 1,
       "type": "stat",
-      "title": "Delivered within 5 seconds",
-      "description": "Goal: at least 99% of SOS alerts processed within 5 seconds (last 5 minutes).",
+      "title": "Within the 5-second goal (15 min)",
+      "description": "Share of the last 15 minutes in which no SOS alert had waited more than 5 seconds.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "gridPos": {
         "h": 4,
-        "w": 6,
+        "w": 5,
         "x": 0,
         "y": 0
       },
       "targets": [
         {
           "refId": "A",
-          "expr": "100 * sum(rate(sos_alert_delivery_seconds_bucket{le=\"5.0\"}[5m])) / sum(rate(sos_alert_delivery_seconds_count[5m]))",
+          "expr": "100 * avg_over_time((max(sos_queue_oldest_waiting_seconds) <= bool 5)[15m:2s])",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -45,7 +45,19 @@
       "fieldConfig": {
         "defaults": {
           "unit": "percent",
-          "noValue": "No data yet",
+          "noValue": "0",
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "text": "No data yet",
+                  "color": "#6B7488"
+                }
+              }
+            }
+          ],
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -59,19 +71,7 @@
               }
             ]
           },
-          "decimals": 1,
-          "mappings": [
-            {
-              "type": "special",
-              "options": {
-                "match": "null+nan",
-                "result": {
-                  "text": "No alerts yet",
-                  "color": "#6B7488"
-                }
-              }
-            }
-          ]
+          "decimals": 1
         },
         "overrides": []
       },
@@ -100,8 +100,8 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 6,
-        "x": 6,
+        "w": 5,
+        "x": 5,
         "y": 0
       },
       "targets": [
@@ -120,6 +120,18 @@
         "defaults": {
           "unit": "short",
           "noValue": "0",
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "text": "No data yet",
+                  "color": "#6B7488"
+                }
+              }
+            }
+          ],
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -150,22 +162,22 @@
     {
       "id": 3,
       "type": "stat",
-      "title": "Notifier pods running",
-      "description": "",
+      "title": "Longest wait right now",
+      "description": "How long the oldest unfinished alert has been waiting. 0 means nothing is waiting.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "gridPos": {
         "h": 4,
-        "w": 6,
-        "x": 12,
+        "w": 5,
+        "x": 10,
         "y": 0
       },
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(up{job=\"notifier\"} == 1) or vector(0)",
+          "expr": "max(sos_queue_oldest_waiting_seconds)",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -176,22 +188,38 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "short",
-          "noValue": "No data yet",
+          "unit": "s",
+          "noValue": "0",
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "text": "No data yet",
+                  "color": "#6B7488"
+                }
+              }
+            }
+          ],
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
-                "color": "red",
+                "color": "green",
                 "value": null
               },
               {
-                "color": "green",
-                "value": 1
+                "color": "orange",
+                "value": 2
+              },
+              {
+                "color": "red",
+                "value": 5
               }
             ]
           },
-          "decimals": 0
+          "decimals": 1
         },
         "overrides": []
       },
@@ -212,7 +240,7 @@
     {
       "id": 4,
       "type": "stat",
-      "title": "Alerts firing",
+      "title": "Notifier pods running",
       "description": "",
       "datasource": {
         "type": "prometheus",
@@ -220,14 +248,14 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 6,
-        "x": 18,
+        "w": 5,
+        "x": 15,
         "y": 0
       },
       "targets": [
         {
           "refId": "A",
-          "expr": "count(ALERTS{alertstate=\"firing\"}) or vector(0)",
+          "expr": "sum(up{job=\"notifier\"} == 1) or vector(0)",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -240,15 +268,27 @@
         "defaults": {
           "unit": "short",
           "noValue": "0",
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "text": "No data yet",
+                  "color": "#6B7488"
+                }
+              }
+            }
+          ],
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "red",
                 "value": null
               },
               {
-                "color": "red",
+                "color": "green",
                 "value": 1
               }
             ]
@@ -273,9 +313,83 @@
     },
     {
       "id": 5,
+      "type": "stat",
+      "title": "Alerts firing",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "count(ALERTS{alertstate=\"firing\"}) or vector(0)",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "legendFormat": "",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "0",
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "text": "No data yet",
+                  "color": "#6B7488"
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 6,
       "type": "timeseries",
-      "title": "Alerts per minute",
-      "description": "When all notifiers are killed, 'accepted' keeps going while 'delivered' drops, then catches up.",
+      "title": "How long the oldest alert has waited",
+      "description": "Stays near 0 when healthy. Climbs while every notifier is down, and the red line is the 5-second goal.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -289,90 +403,12 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(rate(sos_alerts_received_total[1m])) * 60",
+          "expr": "max(sos_queue_oldest_waiting_seconds)",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "legendFormat": "accepted by the API"
-        },
-        {
-          "refId": "B",
-          "expr": "sum(rate(sos_alerts_delivered_total[1m])) * 60",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "legendFormat": "delivered to contacts"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 2,
-            "fillOpacity": 12,
-            "showPoints": "never",
-            "spanNulls": true
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "none"
-        }
-      }
-    },
-    {
-      "id": 6,
-      "type": "timeseries",
-      "title": "Time to deliver an alert",
-      "description": "The red line is the 5 second goal.",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 4
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "histogram_quantile(0.5, sum by (le) (rate(sos_alert_delivery_seconds_bucket[1m])))",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "legendFormat": "median"
-        },
-        {
-          "refId": "B",
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(sos_alert_delivery_seconds_bucket[1m])))",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "legendFormat": "95th percentile"
-        },
-        {
-          "refId": "C",
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(sos_alert_delivery_seconds_bucket[1m])))",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "legendFormat": "99th percentile"
+          "legendFormat": "oldest waiting alert"
         }
       ],
       "fieldConfig": {
@@ -388,6 +424,7 @@
               "mode": "line"
             }
           },
+          "min": 0,
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -419,8 +456,69 @@
     {
       "id": 7,
       "type": "timeseries",
+      "title": "Alerts per minute",
+      "description": "When all notifiers are down, 'accepted' keeps going while 'finished' drops to 0, then catches up.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(sos_alerts_received_total[30s])) * 60",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "legendFormat": "accepted by the API"
+        },
+        {
+          "refId": "B",
+          "expr": "max(rate(sos_alerts_processed_total[30s])) * 60",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "legendFormat": "finished by a notifier"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
       "title": "Alerts waiting in the queue",
-      "description": "Backlog builds while the notifiers are down and drains when they return.",
+      "description": "The backlog builds while the notifiers are down and drains when they return.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -478,7 +576,7 @@
       }
     },
     {
-      "id": 8,
+      "id": 9,
       "type": "timeseries",
       "title": "Pods running",
       "description": "",

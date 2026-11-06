@@ -1,6 +1,6 @@
 import { h } from "../ui.js";
 import { getSession } from "../api.js";
-import { DEMO_KEY } from "./home.js";
+import { DEMO_KEY } from "../location.js";
 
 export function mount(root, ctx) {
   const user = getSession().user;

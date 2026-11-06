@@ -2,15 +2,17 @@ import logging
 import os
 import signal
 import socket
+import threading
 import time
-from datetime import datetime, timezone
+from datetime import timedelta
 
 import redis
 import requests
 from prometheus_client import Counter, Histogram, start_http_server
-from sqlalchemy import select
+from sqlalchemy import select, update
 
-from common.db import Alert, Contact, Database, Delivery, User
+from common.alerts import BadMessage, store_alert
+from common.db import Database, Walk, utcnow
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("notifier")
@@ -35,6 +37,8 @@ DELIVERY_LATENCY = Histogram(
 )
 
 
+WALK_GRACE_SECONDS = int(os.getenv("WALK_GRACE_SECONDS", "60"))
+WALKS_MISSED = Counter("sos_walks_missed_total", "Walk-home timers that ran out without a check-in")
 STOP = False
 
 
@@ -44,55 +48,6 @@ def request_stop(signum, frame) -> None:
     global STOP
     STOP = True
     log.info("signal %s received: finishing the current alerts, then shutting down", signum)
-
-
-class BadMessage(Exception):
-    """The message can never be processed (retrying would not help)."""
-
-
-def store_alert(db: Database, stream_id: str, fields: dict) -> dict:
-    """Save the alert and one delivery row per accepted contact. Safe to run twice for the
-    same message: the unique stream id and (alert, recipient) pair stop duplicates."""
-    try:
-        sender_id = int(fields["sender_id"])
-        latitude = float(fields["latitude"])
-        longitude = float(fields["longitude"])
-        created_at = float(fields["created_at"])
-        message = str(fields.get("message", ""))[:280]
-    except (KeyError, ValueError) as exc:
-        raise BadMessage(f"malformed alert: {exc!r}")
-
-    with db.Session() as session, session.begin():
-        sender = session.get(User, sender_id)
-        if sender is None:
-            raise BadMessage(f"unknown sender {sender_id}")
-        alert = session.scalar(select(Alert).where(Alert.stream_id == stream_id))
-        if alert is None:
-            alert = Alert(
-                stream_id=stream_id,
-                sender_id=sender_id,
-                latitude=latitude,
-                longitude=longitude,
-                message=message,
-                created_at=datetime.fromtimestamp(created_at, timezone.utc),
-            )
-            session.add(alert)
-            session.flush()
-        recipients = session.scalars(
-            select(Contact.addressee_id).where(Contact.requester_id == sender_id, Contact.status == "accepted")
-        ).all()
-        already = set(session.scalars(select(Delivery.recipient_id).where(Delivery.alert_id == alert.id)).all())
-        for recipient_id in recipients:
-            if recipient_id not in already:
-                session.add(Delivery(alert_id=alert.id, recipient_id=recipient_id))
-        return {
-            "sender": sender.name,
-            "message": message,
-            "latitude": latitude,
-            "longitude": longitude,
-            "recipients": len(recipients),
-            "created_at": created_at,
-        }
 
 
 def telegram_ping(info: dict) -> None:
@@ -133,6 +88,53 @@ def handle(r: redis.Redis, db: Database, msg_id: str, fields: dict) -> None:
     DELIVERY_LATENCY.observe(max(0.0, time.time() - info["created_at"]))
 
 
+def check_walks(db: Database, now=None) -> int:
+    """Alert the contacts of everyone whose walk timer ran out (and whose grace period has passed).
+    Several notifier pods run this at once. The alert is saved under a fixed id, so doing it twice never
+    duplicates it, and the status change only succeeds for one of them."""
+    now = now or utcnow()
+    with db.Session() as session:
+        overdue = session.scalars(
+            select(Walk).where(Walk.status == "active", Walk.due_at <= now - timedelta(seconds=WALK_GRACE_SECONDS))
+        ).all()
+    handled = 0
+    for walk in overdue:
+        note = f" ({walk.note})" if walk.note else ""
+        fields = {
+            "sender_id": str(walk.user_id),
+            "latitude": str(walk.last_latitude),
+            "longitude": str(walk.last_longitude),
+            "message": f"Missed their walk check-in{note}. Please call or check on them.",
+            "created_at": str(time.time()),
+            "kind": "walk_missed",
+        }
+        try:
+            store_alert(db, f"walk-{walk.id}", fields)
+        except BadMessage:
+            log.exception("walk %s cannot be alerted, closing it", walk.id)
+            with db.Session() as session, session.begin():
+                session.execute(update(Walk).where(Walk.id == walk.id, Walk.status == "active").values(status="cancelled", ended_at=now))
+            continue
+        with db.Session() as session, session.begin():
+            changed = session.execute(
+                update(Walk).where(Walk.id == walk.id, Walk.status == "active").values(status="alerted", alerted_at=now)
+            ).rowcount
+        if changed:
+            WALKS_MISSED.inc()
+            log.warning("walk %s: no check-in, contacts alerted", walk.id)
+            handled += 1
+    return handled
+
+
+def watch_walks(db: Database) -> None:
+    while not STOP:
+        try:
+            check_walks(db)
+        except Exception:
+            log.exception("walk check failed, will try again")
+        time.sleep(5)
+
+
 def ensure_group(r: redis.Redis) -> None:
     try:
         r.xgroup_create(STREAM, GROUP, id="0", mkstream=True)
@@ -149,6 +151,7 @@ def main() -> None:
     db.wait_until_ready()
     r = redis.Redis.from_url(REDIS_URL, decode_responses=True)
     ensure_group(r)
+    threading.Thread(target=watch_walks, args=(db,), daemon=True).start()
     signal.signal(signal.SIGTERM, request_stop)
     signal.signal(signal.SIGINT, request_stop)
     log.info("notifier %s started", CONSUMER)

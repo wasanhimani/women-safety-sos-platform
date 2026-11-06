@@ -1,18 +1,16 @@
-# Service level objective: 99% of SOS alerts are processed within 5 seconds of being accepted.
+# Service level objective: no SOS alert waits more than 5 seconds before a notifier finishes it.
+# The numbers come from the queue itself (published by the API pods), so they stay accurate
+# even when every notifier pod has crashed.
 groups:
   - name: sos-slo
+    interval: 2s
     rules:
-      - record: sos:delivery_under_5s:ratio_5m
-        expr: |
-          sum(rate(sos_alert_delivery_seconds_bucket{le="5.0"}[5m]))
-          / sum(rate(sos_alert_delivery_seconds_count[5m]))
-
-      - alert: SOSDeliverySLOBreach
-        expr: sos:delivery_under_5s:ratio_5m < 0.99
-        for: 30s
+      - alert: SOSAlertWaitingTooLong
+        expr: max(sos_queue_oldest_waiting_seconds) > 5
+        for: 0s
         labels: { severity: critical }
         annotations:
-          summary: "Fewer than 99% of SOS alerts were delivered within 5 seconds"
+          summary: "An SOS alert has been waiting more than 5 seconds"
 
       - alert: SOSNotifierDown
         expr: (sum(up{job="notifier"} == 1) or vector(0)) < 1

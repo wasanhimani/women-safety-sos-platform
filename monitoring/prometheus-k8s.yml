@@ -1,7 +1,7 @@
 # Prometheus configuration used inside the Kubernetes cluster.
 global:
   scrape_interval: 5s
-  evaluation_interval: 5s
+  evaluation_interval: 2s
 
 rule_files:
   - /etc/prometheus/slo-rules.yml
@@ -10,6 +10,7 @@ scrape_configs:
   # The *-metrics services are "headless": DNS returns one address per pod,
   # so every pod is scraped separately and shows up as its own target.
   - job_name: sos-api
+    scrape_interval: 2s      # the queue numbers live here; a short interval catches short outages
     metrics_path: /metrics
     dns_sd_configs:
       - names: ["sos-api-metrics.sos.svc.cluster.local"]

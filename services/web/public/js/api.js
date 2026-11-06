@@ -103,6 +103,12 @@ export const api = {
   // The SOS request retries on network errors and server errors. A retry can very rarely
   // produce a duplicate alert, which is the safer mistake than losing one.
   sos: (latitude, longitude, message) => request("POST", "/sos", { latitude, longitude, message }, { retries: 3 }),
+  startWalk: (minutes, note, latitude, longitude) => request("POST", "/walks", { minutes, note, latitude, longitude }),
+  activeWalk: () => request("GET", "/walks/active"),
+  pingWalk: (id, latitude, longitude) => request("POST", `/walks/${id}/ping`, { latitude, longitude }),
+  extendWalk: (id, minutes) => request("POST", `/walks/${id}/extend`, { minutes }),
+  walkSafe: (id) => request("POST", `/walks/${id}/safe`, {}),
+  cancelWalk: (id) => request("DELETE", `/walks/${id}`),
   inbox: () => request("GET", "/inbox"),
   markSeen: (id) => request("POST", `/inbox/${id}/seen`, {}),
   sent: () => request("GET", "/alerts/sent"),

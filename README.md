@@ -11,10 +11,18 @@ with a live map link. The design goal is that **an alert is never lost**, even w
                                             └── /metrics ──▶ Prometheus ──▶ Grafana
 ```
 
+## Walk home timer
+Set a time before you walk. If you have not tapped **I'm safe** by then, you get a 60 second grace period, and after that
+your trusted contacts are alerted automatically with your last known location.
+The deadline is watched **by the server**, not by the phone, so the alert still goes out if the phone dies, loses signal
+or is taken. Contacts see it labelled "Missed check-in"; if you are fine afterwards, **I'm safe now** tells them.
+Checking in on time (or cancelling) alerts nobody.
+
 ## Design decisions
 - **Queue between API and notifier.** The API answers `202` as soon as the alert is in a durable Redis Stream.
   If the notifier is down, alerts wait and are delivered on recovery (tested: both notifier pods deleted during a 20-alert burst, 0 lost).
 - **SOS works even if the database is down.** `/sos` only needs a valid signed token and the queue.
+- **The walk timer lives on the server.** A notifier loop checks deadlines; the alert is saved under a fixed id, so several pods running the check can never alert twice.
 - **Safe retries.** Alerts are saved with their stream id as a unique key, so a retried alert never creates duplicates.
   Malformed messages go to a dead-letter stream instead of retrying forever.
 - **Consent for contacts.** Naming someone a trusted contact creates a request; alerts flow only after they accept.
@@ -37,6 +45,7 @@ with a live map link. The design goal is that **an alert is never lost**, even w
 | `POST /auth/signup`, `POST /auth/login` | create account / get a token |
 | `POST /contacts`, `GET /contacts`, `POST /contacts/{id}/accept`, `DELETE /contacts/{id}` | trusted contacts |
 | `POST /sos` | press the SOS button (needs login) |
+| `POST /walks`, `GET /walks/active`, `POST /walks/{id}/safe`, `/extend`, `/ping`, `DELETE /walks/{id}` | walk home timer |
 | `GET /inbox`, `POST /inbox/{id}/seen` | alerts sent to me, mark as seen |
 | `GET /alerts/sent` | my alert history, with how many contacts received and saw each |
 
@@ -77,10 +86,13 @@ On a computer without GPS, switch on **Account > Demo location** before pressing
 bash scripts/open-grafana.sh     # opens the dashboard at http://localhost:3000
 ```
 Prometheus scrapes every API and notifier pod; Grafana shows the **Raksha: SOS alert pipeline** dashboard:
-alerts accepted vs delivered per minute, time to deliver (median, 95th, 99th percentile), alerts waiting in the queue,
-pods running, and the service level objective **99% of alerts delivered within 5 seconds**.
-Alert rules (`monitoring/slo-rules.yml`) fire when that objective is missed, when no notifier or API pod is running,
-or when alerts sit in the queue for over a minute. Run the chaos test below and watch the dashboard react.
+how long the oldest alert has waited, alerts accepted vs finished per minute, the queue backlog, pods running,
+and the objective **no SOS alert waits more than 5 seconds**.
+
+The queue numbers are read from Redis and published by the API pods, not by the notifiers. That matters:
+numbers kept inside a notifier pod disappear with the pod, so a crash would look like nothing happened.
+Alert rules (`monitoring/slo-rules.yml`) fire when an alert waits over 5 seconds, when no notifier or API pod
+is running, or when alerts sit in the queue for over a minute. Run the chaos test below and watch the dashboard react.
 
 ## Chaos test
 ```bash
@@ -97,7 +109,7 @@ GitHub Actions runs the tests, builds all three images and scans them with Trivy
 - [x] Docker, Kubernetes manifests (replicas, probes, rolling updates, pod disruption budget), CI with security scan
 - [x] Chaos test: all notifier pods deleted during a burst of 20 alerts, none lost
 - [x] Mobile-friendly installable web app (SOS button, contacts, alerts)
-- [x] Grafana dashboard and SLO alerting ("99% of alerts processed in under 5 seconds")
+- [x] Grafana dashboard and alerting (no alert waits more than 5 seconds)
 - [ ] Terraform and GitOps (Argo CD)
 - [ ] Live location link, unsafe-area reports
 
